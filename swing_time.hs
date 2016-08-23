@@ -188,8 +188,7 @@ furthestAngleAllowed :: Index -> Index -> Float -> Direction -> Grid -> Maybe Fl
 furthestAngleAllowed startPos ropedPost startAngle direction grid =
     -- get all the posts that could be in the way
     let possiblyBlockingPosts = postsInRadius startPos ropedPost grid
-        maybePostAndAngle = firstPostAndAngle ropedPost startAngle possiblyBlockingPosts direction
-        maybePostAngle = getAngle maybePostAndAngle
+        maybePostAngle = firstPostAndAngle ropedPost startAngle possiblyBlockingPosts direction
         maybeOffGrid = goesOffGrid startPos ropedPost startAngle direction grid
         --This shouldn't be a min. and also, it's unused. run compiler with some warnings agian. 
     --in  maybeMaxAngle = min maybeAngle maybeOffGrid
@@ -217,11 +216,6 @@ sortByAngle indicesWithAngles startAngle direction =
         (before, after) = span (\(_,ang) -> ang < startAngle) ordered
         anticlockwise = after ++ before
     in if direction == Anticlockwise then anticlockwise else reverse anticlockwise
-
---TODO that this exists is a code smell
-getAngle :: Maybe (Index,Float) -> Maybe Float
-getAngle Nothing = Nothing
-getAngle (Just (_ind, ang)) = Just ang
 
 removePosts :: [Square] -> [Index]
 removePosts sqs =
@@ -258,12 +252,12 @@ betweenAnglesAntiClockwise startAngle maxAngle angleUnderTest
     | maxAngle == startAngle = startAngle == angleUnderTest
     | maxAngle < startAngle = (angleUnderTest <= maxAngle) || (angleUnderTest >= startAngle)
 
-firstPostAndAngle :: Index -> Float -> [Index] -> Direction -> Maybe (Index, Float)
+firstPostAndAngle :: Index -> Float -> [Index] -> Direction -> Maybe Float
 firstPostAndAngle _ _ [] _ = Nothing
 firstPostAndAngle ropedPost startAngle posts direction =
     let anglesWithSquare = attachAngles ropedPost posts
         sortedbyAngle = sortByAngle anglesWithSquare startAngle direction
-    in Just $ head sortedbyAngle
+    in Just $ snd $ head sortedbyAngle
 
 postsInRadius :: Index -> Index -> Grid -> [Index]
 postsInRadius start post grid =
