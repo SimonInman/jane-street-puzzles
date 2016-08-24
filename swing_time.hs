@@ -10,9 +10,13 @@ import Data.Maybe
 --Grid Stuff
 -- A square is an index, and True IFF there is a post there
 type Index = (Int, Int)
+type Post = Index
 type Square = (Index, Bool)
+type Angle = Float
+type RopeLength = Float --TODO this is currently the square, must become the real one
 type Grid = Array Index Bool
 data Direction = Clockwise | Anticlockwise deriving (Eq)
+data SwingStart = SwingStart Post Angle RopeLength
 --rename?
 data Cardinal = Up | Down | L | R deriving (Eq) --Left and Right are already in prelude :(
 --ShortestPath stuff
@@ -28,8 +32,6 @@ findShortestPath start end grid =
         unvisitedNodes = [(i, Nothing, []) | i <- unvisitedIndices]
         dummyPost = (0,0)
     in shortestPath end [] ((start, Just 0, [(dummyPost, start)]):unvisitedNodes) grid
-
-runFSP = findShortestPath (1,1) (20,20) realGrid
 
 shortestPath :: Index -> [VisitedNode] -> [UnvisitedNode] -> Grid -> VisitedNode
 shortestPath target visited unvisited grid
@@ -57,11 +59,17 @@ visitNode currentlyVisiting unvisited grid =
 --also we should be returning (PostLocation, StoppingPoint) for eaech move
 reachable :: Index -> Grid -> [(Index, Index, Cost)]
 reachable start grid =
-    let allPosts = postLocations grid
-        noPostinWay p = p == effectivePost start p grid
-        reachablePosts = filter noPostinWay allPosts
+    let reachablePosts = filter (isReachablePost grid start) $ postLocations grid
         swingUsingPost p = canSwingTo start p grid
     in concatMap swingUsingPost reachablePosts
+
+isReachablePost :: Grid -> Index -> Post -> Bool
+isReachablePost grid start targetPost =
+    let ang = angle targetPost start
+        dist = distance targetPost start
+    in targetPost == effectivePost (SwingStart targetPost ang dist) grid
+
+testIRP = isReachablePost testGrid (8,2) (6,4)
 
 -- hmm running into horribleness around cost being a maybe type
 --maybe just use something like -1 as a horrible sentinel value
@@ -88,12 +96,11 @@ shouldUpdateNode (currentCost, _currentIndex) (maybeUnvisitedCost, unvisitedInde
           isLowerCost = isNothing maybeUnvisitedCost || (Just costFromCurrent < maybeUnvisitedCost)
 
 --this check fails
-goesOffGrid :: Index -> Index -> Float -> Direction -> Grid -> Maybe Float
-goesOffGrid startLocation ropedPost startAngle direction grid =
+goesOffGrid :: SwingStart -> Direction -> Grid -> Maybe Float
+goesOffGrid (SwingStart ropedPost startAngle ropeLen) direction grid =
     let toTest = cardinalDirections startAngle direction
-        ropeLength = sqrt $ fromIntegral $ distance startLocation ropedPost
         gridSize = fromIntegral $ snd $ snd $ bounds grid
-        f = outAtAngle ropedPost ropeLength direction gridSize
+        f = outAtAngle ropedPost ropeLen direction gridSize
         limits = map f toTest
         realLimits = dropWhile (== Nothing) limits
     in if null realLimits then Nothing else head realLimits
@@ -117,7 +124,7 @@ outAtAngleHelper ropeLen gridEdgeDist cardinal direction
           angleDiff = if direction == Clockwise then angleSize else (-angleSize)
 
 --expected
-testOAA = let ropeLen = sqrt $ fromIntegral $ (distance (1,1) (19,2)) :: Float
+testOAA = let ropeLen = distance (1,1) (19,2) :: Float
           in [outAtAngle (19,2) ropeLen Clockwise 20 L,
               outAtAngle (19,2) ropeLen Clockwise 20 Up,
               outAtAngle (19,2) ropeLen Clockwise 20 R,
@@ -139,59 +146,58 @@ cardinalDirections startAngle Clockwise
     | startAngle <= 3*pi/2 = [L, Up, R, Down]
     | otherwise = [Down, L, Up, R]
 
---TODO change return to include ropedPost (Index, Index, Cost)
-canSwingTo :: Index -> Index -> Grid -> [(Index, Index, Cost)]
-canSwingTo start ropedPost grid =
-    let directed = canSwingToDirected start ropedPost grid
-        ropeLenSquared = distance start ropedPost
-        cost = 1/fromIntegral ropeLenSquared
+canSwingTo :: Index -> Post -> Grid -> [(Index, Post, Cost)]
+canSwingTo startPos ropedPost grid =
+    let ropeLen = distance startPos ropedPost
+        startAngle  = angle ropedPost startPos
+        directed = canSwingToDirected (SwingStart ropedPost startAngle ropeLen) grid
+        cost = 1/(ropeLen^2)
         landingSpots = directed Anticlockwise ++ directed Clockwise
     in zip3 landingSpots (repeat ropedPost) (repeat cost)
 
-canSwingToDirected :: Index -> Index -> Grid -> Direction -> [Index]
-canSwingToDirected start ropedPost grid direction =
-    let direct = directLandingSquares start ropedPost direction grid
-        lastPoint = if null direct then Nothing else Just (last direct)
-        indirect = secondaryLandingSquares lastPoint ropedPost direction grid
-    in (direct ++ indirect)
+canSwingToDirected :: SwingStart -> Grid -> Direction -> [Index]
+canSwingToDirected swingStart grid direction =
+    let direct = directLandingSquares swingStart direction grid
+        possiblyBlockingPosts = postsInRadius swingStart grid
+        maybePostAndAngle = angleAndIndexFirstBlockingPost swingStart possiblyBlockingPosts direction
+    in case maybePostAndAngle of
+           Nothing -> direct
+           Just (post, ang) -> let indirect = secondaryLandingSquares swingStart post ang direction grid
+                              in (direct ++ indirect)
 
-secondaryLandingSquares :: Maybe Index -> Index -> Direction -> Grid -> [Index]
-secondaryLandingSquares Nothing _ _ _ = []
-secondaryLandingSquares (Just lastLanding) ropedPost direction grid =
-    let maybePostWeHit = effectivePost lastLanding ropedPost grid
-        noSuchPole = maybePostWeHit == ropedPost
-    in if noSuchPole then [] else canSwingToDirected lastLanding maybePostWeHit grid direction
+secondaryLandingSquares :: SwingStart -> Post -> Angle -> Direction -> Grid -> [Index]
+secondaryLandingSquares (SwingStart originalRopedPost _ ropeLen) newPost newAng direction grid =
+    let newDist = ropeLen - distance originalRopedPost newPost
+        newSwingStart = SwingStart newPost newAng newDist
+    in canSwingToDirected newSwingStart grid direction
 
---hm this seems like it should be easier?
-effectivePost :: Index -> Index -> Grid -> Index
-effectivePost inSquare ropedPost grid =
-    let ourAngle = angle inSquare ropedPost
-        posts = postLocations grid
-        withAngles = attachAngles inSquare posts
-        sameAngleFun (_, a) = a == ourAngle
-        colinearPosts = map fst $ filter sameAngleFun withAngles
-    in removeColinearPosts inSquare colinearPosts
+--Did we snag another post?
+effectivePost :: SwingStart -> Grid -> Index
+effectivePost (SwingStart ropedPost currentAngle ropeLen) grid =
+    let allPosts = postLocations grid
+        isBetween post = (angle ropedPost post == currentAngle) && (distance post ropedPost < ropeLen)
+        candidates = filter isBetween allPosts
+    in case candidates of
+           [] -> ropedPost
+           _ -> maximumBy (compare `on` distance ropedPost) candidates
 
 --sorted list of legal landing spots in given direction
-directLandingSquares :: Index -> Index -> Direction -> Grid -> [Index]
-directLandingSquares startPos ropedPost direction grid =
+directLandingSquares :: SwingStart -> Direction -> Grid -> [Index]
+directLandingSquares swingStart@(SwingStart ropedPost startAngle ropeLen) direction grid =
       --get all the points that could ever work
-    let withoutObstruction = removePosts $ pointsWithSameRadius startPos ropedPost grid
-        startAngle = angle ropedPost startPos
-        furthestAngle = furthestAngleAllowed startPos ropedPost startAngle direction grid
+    let withoutObstruction = pointsWithSameRadius ropedPost ropeLen grid
+        furthestAngle = furthestAngleAllowed swingStart direction grid
         landingsWithAngles = landingSquares ropedPost startAngle furthestAngle direction withoutObstruction
         sortedWithAngles = sortByAngle landingsWithAngles startAngle direction
    in map fst sortedWithAngles
 
 --how far can we swing before hitting a post or an edge?
-furthestAngleAllowed :: Index -> Index -> Float -> Direction -> Grid -> Maybe Float
-furthestAngleAllowed startPos ropedPost startAngle direction grid =
+furthestAngleAllowed :: SwingStart -> Direction -> Grid -> Maybe Float
+furthestAngleAllowed sS@(SwingStart _ startAngle _) direction grid =
     -- get all the posts that could be in the way
-    let possiblyBlockingPosts = postsInRadius startPos ropedPost grid
-        maybePostAngle = firstPostAndAngle ropedPost startAngle possiblyBlockingPosts direction
-        maybeOffGrid = goesOffGrid startPos ropedPost startAngle direction grid
-        --This shouldn't be a min. and also, it's unused. run compiler with some warnings agian. 
-    --in  maybeMaxAngle = min maybeAngle maybeOffGrid
+    let possiblyBlockingPosts = postsInRadius sS grid
+        maybePostAngle = snd <$> angleAndIndexFirstBlockingPost sS possiblyBlockingPosts direction
+        maybeOffGrid = goesOffGrid sS direction grid
     in firstAngleInDirection startAngle direction maybePostAngle maybeOffGrid
 
 firstAngleInDirection :: Float -> Direction -> Maybe Float -> Maybe Float -> Maybe Float
@@ -205,6 +211,7 @@ firstAngleInDirection startAngle direction (Just first) (Just second) =
               Clockwise -> max normalisedFirst normalisedSecond
               Anticlockwise -> min normalisedFirst normalisedSecond
 
+normaliseAngle :: Angle -> Angle
 normaliseAngle ang
     | ang < 0 = normaliseAngle (ang + (2*pi))
     | ang >= 2*pi = normaliseAngle (ang - (2*pi))
@@ -216,11 +223,6 @@ sortByAngle indicesWithAngles startAngle direction =
         (before, after) = span (\(_,ang) -> ang < startAngle) ordered
         anticlockwise = after ++ before
     in if direction == Anticlockwise then anticlockwise else reverse anticlockwise
-
-removePosts :: [Square] -> [Index]
-removePosts sqs =
-    let withoutPosts = filter (\(_,isPost) -> not isPost) sqs
-    in map fst withoutPosts
 
 attachAngles :: Index -> [Index] -> [(Index, Float)]
 attachAngles startSq targetSqs =
@@ -252,34 +254,32 @@ betweenAnglesAntiClockwise startAngle maxAngle angleUnderTest
     | maxAngle == startAngle = startAngle == angleUnderTest
     | maxAngle < startAngle = (angleUnderTest <= maxAngle) || (angleUnderTest >= startAngle)
 
-firstPostAndAngle :: Index -> Float -> [Index] -> Direction -> Maybe Float
-firstPostAndAngle _ _ [] _ = Nothing
-firstPostAndAngle ropedPost startAngle posts direction =
+angleAndIndexFirstBlockingPost :: SwingStart -> [Index] -> Direction -> Maybe (Index, Float)
+angleAndIndexFirstBlockingPost _ [] _ = Nothing
+angleAndIndexFirstBlockingPost (SwingStart ropedPost startAngle _) posts direction =
     let anglesWithSquare = attachAngles ropedPost posts
         sortedbyAngle = sortByAngle anglesWithSquare startAngle direction
-    in Just $ snd $ head sortedbyAngle
+    in Just $ head sortedbyAngle
 
-postsInRadius :: Index -> Index -> Grid -> [Index]
-postsInRadius start post grid =
-    let dist = distance start post
-        filterFun maybePost = isPostInRadius post maybePost dist
+postsInRadius :: SwingStart -> Grid -> [Index]
+postsInRadius (SwingStart post _ ropeLen) grid =
+    let filterFun maybePost = isPostInRadius post maybePost ropeLen
         squares = filter filterFun (assocs grid)
     in map fst squares
 
 --is a given square a post, and is it within distance of where
 --we're swinging from?
-isPostInRadius :: Index -> Square -> Int -> Bool
+isPostInRadius :: Post -> Square -> Float -> Bool
 isPostInRadius ropedPost possiblePost maxDist =
     let (endLocation, isPost) = possiblePost
         ourDist = distance ropedPost endLocation
     in isPost && (maxDist >= ourDist) && (ourDist /= 0)
 
-pointsWithSameRadius :: Index -> Index -> Grid -> [Square]
-pointsWithSameRadius start post grid =
-    let desiredDist = distance start post
-        isSameDist ind = desiredDist == distance ind post
-        filterFun (ind, _) = (ind /= start) && isSameDist ind
-    in filter filterFun (assocs grid)
+pointsWithSameRadius :: Index -> RopeLength -> Grid -> [Index]
+pointsWithSameRadius post desiredDist grid =
+    let isSameDist ind = desiredDist == distance ind post
+        filterFun (ind, isPost) = isSameDist ind && not isPost
+    in map fst $ filter filterFun (assocs grid)
 
 --clockwise angle to one point from another
 -- angle (0,0) (1,1) = 45 degrees or pi/4
@@ -294,18 +294,14 @@ angle (x1, y1) (x2, y2)
           adjSide = x1 - x2
 
 --returns square of distance - avoids need for floats
-distance :: Index -> Index -> Int
-distance (x1, y1) (x2,y2) = (x1 - x2)^2 + (y1-y2)^2
+distance :: Index -> Index -> RopeLength
+distance (x1, y1) (x2,y2) = sqrt $ fromIntegral squaredLen
+    where squaredLen = ((x1 - x2)^2 + (y1-y2)^2) :: Int
 
 postLocations :: Grid -> [Index]
 postLocations grid =
     let posts = filter snd $ assocs grid
     in map fst posts
-
---from a set of poles with the same angle, get the nearest.
-removeColinearPosts :: Index -> [Index] -> Index
-removeColinearPosts startSquare posts =
-    minimumBy (compare `on` distance startSquare) posts
 
 testGrid :: Grid
 testGrid = array ((1,1),(12,12)) g
@@ -347,7 +343,7 @@ prettyPrintPath path =
     let ((_,start) : inOrder) = reverse path
         startStr = "Starting at " ++ show start ++ "\n"
         moveString (rope, landing) = "Use " ++ show rope ++ " to swing to " ++ show landing ++ "\n"
-    in startStr ++ (concatMap moveString inOrder)
+    in startStr ++ concatMap moveString inOrder
 
---main :: IO ()
+main :: IO ()
 main = putStr $ prettyPrint $ findShortestPath (1,1) (20,20) realGrid
