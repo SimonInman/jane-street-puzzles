@@ -6,6 +6,8 @@ import Data.Functor
 import Data.Maybe
 import Debug.Trace
 
+import Surds
+
 --TODO create a utils file. Move things that don't need a grid?
 
 --Grid Stuff
@@ -14,7 +16,7 @@ type Index = (Int, Int)
 type Post = Index
 type Square = (Index, Bool)
 type Angle = Double
-type RopeLength = Double --TODO this is currently the square, must become the real one
+type RopeLength = Surd
 type Grid = Array Index Bool
 data Direction = Clockwise | Anticlockwise deriving (Eq, Show)
 data SwingStart = SwingStart Post Angle RopeLength deriving (Show)
@@ -110,20 +112,20 @@ goesOffGrid (SwingStart ropedPost startAngle ropeLen) direction grid =
 
 outAtAngle :: Index -> RopeLength -> Direction -> Double -> Cardinal -> Maybe Angle
 outAtAngle (ropedX, ropedY) ropeLength direction gridSize cardinal
-    | ropeLength < edgeDist = Nothing
+    | (surdToFloating ropeLength) < edgeDist = Nothing
     | otherwise = Just $ outAtAngleHelper ropeLength edgeDist cardinal direction
     where edgeDist = distanceToGridEdge ropedDouble cardinal gridSize
           ropedDouble = (fromIntegral ropedX, fromIntegral ropedY)
 
 outAtAngleHelper :: RopeLength -> Double -> Cardinal -> Direction -> Angle
 outAtAngleHelper ropeLen gridEdgeDist R Anticlockwise =
-    2*pi - acos (gridEdgeDist / ropeLen)
+    2*pi - acos (gridEdgeDist / (surdToFloating ropeLen))
 outAtAngleHelper ropeLen gridEdgeDist cardinal direction
     | cardinal == R = angleDiff
     | cardinal == Up = (pi/2) + angleDiff
     | cardinal == L = pi + angleDiff
     | cardinal == Down = (3*pi/2) + angleDiff
-    where angleSize = acos (gridEdgeDist / ropeLen)
+    where angleSize = acos (gridEdgeDist / (surdToFloating ropeLen))
           angleDiff = if direction == Clockwise then angleSize else (-angleSize)
 
 --expected
@@ -154,7 +156,7 @@ canSwingTo startPos ropedPost grid =
     let ropeLen = distance startPos ropedPost
         startAngle  = angle ropedPost startPos
         directed = canSwingToDirected (SwingStart ropedPost startAngle ropeLen) grid
-        cost = 1/(ropeLen^2)
+        cost = 1/((surdToFloating ropeLen)^2)
         landingSpots = directed Anticlockwise ++ directed Clockwise
     in zip3 landingSpots (repeat ropedPost) (repeat cost)
 
@@ -239,7 +241,7 @@ landingSquares ropedPost startAngle maxAngle direction possibleSquares =
     where squaresAndAngles = attachAngles ropedPost possibleSquares
           isBetween (_,ang) = betweenAngles startAngle maxAngle ang direction
 
-testBA = betweenAngles (angle (9,8) (1,1)) (Just 3.9247785) 
+testBA = betweenAngles (angle (9,8) (1,1)) (Just 3.9247785)
 --Is a given angle between a start angle and a possible limit.
 --Accounting for wrapping at 2pi. This is inclusive of the borders
 betweenAngles :: Angle -> Maybe Angle -> Angle -> Direction -> Bool
@@ -273,7 +275,7 @@ angleAndIndexFirstBlockingPost ss@(SwingStart ropedPost startAngle _) grid direc
 
 postsInRadius :: SwingStart -> Grid -> [Index]
 postsInRadius (SwingStart post _ ropeLen) grid =
-    let filterFun maybePost = isPostInRadius post maybePost ropeLen
+    let filterFun maybePost = isPostInRadius post maybePost (surdToFloating ropeLen)
         squares = filter filterFun (assocs grid)
     in map fst squares
 
@@ -282,14 +284,15 @@ postsInRadius (SwingStart post _ ropeLen) grid =
 isPostInRadius :: Post -> Square -> Double -> Bool
 isPostInRadius ropedPost possiblePost maxDist =
     let (endLocation, isPost) = possiblePost
-        ourDist = distance ropedPost endLocation
+        ourDist = surdToFloating $ distance ropedPost endLocation
     in isPost && (maxDist >= ourDist) && (ourDist /= 0)
 
 pointsWithSameRadius :: Index -> RopeLength -> Grid -> [Index]
 pointsWithSameRadius post desiredDist grid =
     let
-        epsilon = 0.0001
-        isSameDist ind = abs (desiredDist - distance ind post) < epsilon -- boooo :<
+        -- epsilon = 0.0001
+        -- isSameDist ind = abs (desiredDist - distance ind post) < epsilon -- boooo :<
+        isSameDist ind = desiredDist == (distance ind post)
         filterFun (ind, isPost) = isSameDist ind && not isPost
     in map fst $ filter filterFun (assocs grid)
 
@@ -307,8 +310,8 @@ angle (x1, y1) (x2, y2)
 
 --returns square of distance - avoids need for floats
 distance :: Index -> Index -> RopeLength
-distance (x1, y1) (x2,y2) = sqrt $ fromIntegral squaredLen
-    where squaredLen = ((x1 - x2)^2 + (y1-y2)^2) :: Int
+distance (x1, y1) (x2,y2) = mkSurd [(1, toInteger squaredLen)]
+    where squaredLen = ((x1 - x2)^2 + (y1-y2)^2)
 
 postLocations :: Grid -> [Index]
 postLocations grid =
@@ -357,7 +360,7 @@ prettyPrintPath path =
         moveString (rope, landing) = "Use " ++ show rope ++ " to swing to " ++ show landing ++ "\n"
     in startStr ++ concatMap moveString inOrder
 
---swingTest = 
+--swingTest =
 --    let
 --        ropedPost = (9,7)
 --        startPos = (4,12)
