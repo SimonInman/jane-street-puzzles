@@ -23,7 +23,7 @@ data Cardinal = Up | Down | L | R deriving (Eq) --Left and Right are already in 
 --ShortestPath stuff
 type Cost = Double
 --this will need to take into account the post to submit the answer
-type Path = [(Index, Index)]
+type Path = [(Post, Index)]
 type VisitedNode = (Index, Cost, Path)
 type UnvisitedNode = (Index, Maybe Cost, Path)
 
@@ -88,13 +88,15 @@ maybeUpdateNode currentNode reachableNodes unvisitedNode
 
 --this has a silly return value :/
 shouldUpdateNode :: (Cost, Index) -> (Maybe Cost, Index) -> [(Index, Index, Cost)] -> (Bool, Index, Cost)
-shouldUpdateNode (currentCost, _currentIndex) (maybeUnvisitedCost, unvisitedIndex) reachableNodes
+shouldUpdateNode a@(currentCost, _currentIndex) b@(maybeUnvisitedCost, unvisitedIndex) reachableNodes
     | isUnreachable = (False, (0,0), 0)
     | otherwise = (isLowerCost, viaPost, costFromCurrent)
     where maybeTargetNode = filter (\(ind,_,_) -> ind == unvisitedIndex) reachableNodes
+          --isUnreachable = if unvisitedIndex == (10,8) then (traceShow (a,b)) null maybeTargetNode else null maybeTargetNode
           isUnreachable = null maybeTargetNode
-          (_targetIndex, viaPost, costToTarget) = head maybeTargetNode
-          stepCost = sqrt costToTarget --distance is already the square of the actual rope length!
+          (_targetIndex, viaPost, costToTarget) = minimumBy (compare `on` swingCost) maybeTargetNode
+          swingCost (_,_,c) = c
+          stepCost = costToTarget
           costFromCurrent = currentCost + stepCost
           isLowerCost = isNothing maybeUnvisitedCost || (Just costFromCurrent < maybeUnvisitedCost)
 
@@ -348,7 +350,7 @@ realGrid = array ((1,1),(20,20)) g
 prettyPrint :: (Index, Cost, Path) -> String
 prettyPrint (target, cost, path) =
     let intro = "shortest path to " ++ show target ++ " in cost " ++ show cost ++ "is\n"
-    in intro ++ prettyPrintPath path
+    in intro ++ debugPrint 0 (reverse path)
 
 prettyPrintPath :: Path -> String
 prettyPrintPath path =
@@ -357,7 +359,21 @@ prettyPrintPath path =
         moveString (rope, landing) = "Use " ++ show rope ++ " to swing to " ++ show landing ++ "\n"
     in startStr ++ concatMap moveString inOrder
 
---swingTest = 
+debugPrint :: Cost -> Path -> String
+debugPrint c ((_, current):(ropedPost, landing):[]) =
+    let
+        ropeLen = distance current ropedPost
+        cost = 1/(ropeLen ^ 2)
+        moveString = "Use " ++ show ropedPost ++ " to swing to " ++ show landing ++ " in cost " ++ show cost ++ ", total cost: "  ++ show (c+cost) ++ "\n"
+    in moveString
+debugPrint c ((_, current):(ropedPost, landing):rest) = 
+    let
+        ropeLen = distance current ropedPost
+        cost = 1/(ropeLen ^ 2)
+        moveString = "Use " ++ show ropedPost ++ " to swing to " ++ show landing ++ " in cost " ++ show cost ++ ", total cost: "  ++ show (cost + c) ++ "\n"
+    in moveString ++ debugPrint (c + cost) ((ropedPost, landing):rest) 
+
+--swingTest =
 --    let
 --        ropedPost = (9,7)
 --        startPos = (4,12)
